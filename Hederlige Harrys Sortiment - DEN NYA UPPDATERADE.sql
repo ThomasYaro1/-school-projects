@@ -26,6 +26,7 @@ City VARCHAR(50) NOT NULL,
 Country VARCHAR(50) NOT NULL,
 Role VARCHAR(10) DEFAULT 'Customer' CHECK (Role IN ('Customer', 'Admin')),
 PhoneNumber VARCHAR(20) NOT NULL,
+ValidTo DATETIME NOT NULL DEFAULT DATEADD(YEAR, 1, GETDATE()),
 IsLocked BIT NOT NULL DEFAULT 0
 );
 
@@ -95,10 +96,10 @@ END;
 
 DECLARE @SALT NVARCHAR(50) = CONVERT(NVARCHAR(50), NEWID());
 DECLARE @HashedPassword VARBINARY(64);
-SET @HashedPassword = HASHBYTES('SHA2_256', @Password);
+SET @HashedPassword = HASHBYTES('SHA2_256', @Password + @SALT);
 
-INSERT INTO Users (Email,PasswordHash, SALT, FirstName,LastName,Address,PostalCode,City,Country,Role,PhoneNumber,IsLocked)
-VALUES (@Email,@HashedPassword,@SALT,@FirstName,@LastName,@Address,@PostalCode,@City,@Country,DEFAULT,@PhoneNumber,0);
+INSERT INTO Users (Email,PasswordHash,SALT,FirstName,LastName,Address,PostalCode,City,Country,Role,PhoneNumber,ValidTo,IsLocked)
+VALUES (@Email,@HashedPassword,@SALT,@FirstName,@LastName,@Address,@PostalCode,@City,@Country,DEFAULT,@PhoneNumber,DEFAULT,0);
 
 DECLARE @UserID INT = SCOPE_IDENTITY();
 
@@ -113,28 +114,11 @@ INSERT INTO EmailVerification (UserID, VerificationCode, ExpiryTime, IsVerified)
 VALUES (@UserID, @VerificationCode, DATEADD(HOUR, 24, GETDATE()), 0);
 
 
-DECLARE @Emailmsg NVARCHAR(MAX);
-SET @Emailmsg = 'Hello ' + @FirstName + 
-                 ', please verify your account by clicking on the following link: ' + @VerificationLink;
-
-EXEC msdb.dbo.sp_send_dbmail
-@profile_name = 'Thomas', -- Byt till din emailprofil som du skapade.
-@recipients = @Email,
-@subject = 'Verify Your Account',
-@body = @Emailmsg,
-@body_format = 'HTML';
-
 SET @ResultCode = 0;
-PRINT 'Account created and verification email sent successfully';
+PRINT 'Account created and verification email sent successfully. please click on the link to verify your account.' + @VerificationLink;
 END;
 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
---Aktivera emailfuktion
-EXEC sp_configure 'show advanced options', 1;
-RECONFIGURE;
-EXEC sp_configure 'Database Mail XPs', 1;
-RECONFIGURE;
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------
 
 GO
 CREATE OR ALTER PROCEDURE ResetPassword
@@ -174,7 +158,7 @@ END;
 IF @IsLocked = 1
 BEGIN
 SET @ResultCode = 1;
-PRINT 'Your account is locked. Please email us at HederligeHarry@HarrysSortiment.se for more information regarding the lockout.';
+PRINT 'Your account is locked. Contact Support.';
 RETURN;
 END;
 
@@ -194,22 +178,64 @@ VALUES				  (@UserID, @ResetCode, @ExpiryTime);
 DECLARE @ResetLink NVARCHAR(500)
 SET @ResetLink = 'https://HederligeHarrysSortiment.se/resetpasswordcode:' + @ResetCode;
 
-DECLARE @Emailmsg NVARCHAR(500)
-SET @Emailmsg = 'Hello, please click on the link and follow the instructions to reset your password.' + @ResetLink;
-
-
-EXEC msdb.dbo.sp_send_dbmail
-@profile_name = 'Thomas', -- Byt till din emailprofil som du skapade
-@recipients = @Email,
-@subject = 'Reset Your Password',
-@body = @Emailmsg,
-@body_format = 'HTML';
 
 SET @ResultCode = 0;
-PRINT 'Email with resetcode sent succesfully';
+PRINT 'Email with resetcode sent succesfully. please click on the link and follow the instructions to reset your password.' + @ResetLink;
 END;
 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------
+GO
+CREATE OR ALTER PROCEDURE SetForgottenPassword
+@Email NVARCHAR(255),
+@Password NVARCHAR(255),
+@ResetCode NVARCHAR(255),
+@ResultCode BIT OUTPUT
+AS
+BEGIN
+SET NOCOUNT ON;
+
+DECLARE @UserId INT;
+DECLARE @CodeExpiry DATETIME;
+DECLARE @CurrentTime DATETIME = GETDATE();
+
+SELECT 
+@UserId = users.UserID,
+@CodeExpiry = pr.ExpiryTime
+FROM Users
+INNER JOIN PasswordReset pr ON Users.UserID = pr.UserID
+WHERE Email = @Email AND ResetCode = @ResetCode;
+
+IF @UserId IS NULL
+BEGIN
+SET @ResultCode = 1;
+PRINT 'User does not exist or reset code is invalid';
+RETURN;
+END
+
+IF @CodeExpiry IS NULL OR @CodeExpiry < @CurrentTime
+BEGIN
+SET @ResultCode = 1;
+PRINT 'Reset code has expired';
+RETURN;
+END
+
+DECLARE @SALT NVARCHAR(50) = CONVERT(NVARCHAR(50), NEWID());
+DECLARE @HashedPassword VARBINARY(64);
+SET @HashedPassword = HASHBYTES('SHA2_256', @Password + @SALT);
+
+UPDATE Users
+SET PasswordHash = @HashedPassword, SALT = @SALT
+WHERE UserId = @UserId;
+
+UPDATE PasswordReset
+SET Expired = 1, ExpiryTime = GETDATE()
+WHERE UserId = @UserId;
+
+SET @ResultCode = 0;
+PRINT 'Password has been changed';
+END;
+
+-----------------------------------------------------------------------------------------------------------------------------------------------
 GO
 CREATE OR ALTER PROCEDURE LockAccount
 @UserID INT
@@ -220,7 +246,7 @@ SET IsLocked = 1
 WHERE UserID = @UserID;
 PRINT 'Account is Locked'
 END;
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------------------------------------------
 GO
 CREATE OR ALTER PROCEDURE UnLockAccount
 @UserID INT
@@ -231,7 +257,7 @@ SET Islocked = 0
 WHERE UserID = @UserID
 PRINT 'Account is Unlocked'
 END;
----------------------------------------------LAGRA ALLA INLOGGNIGSFÖRSÖK---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------LAGRA ALLA INLOGGNIGSFÖRSÖK----------------------------------------------------------------------------
 GO
 CREATE OR ALTER PROCEDURE LoginAttempt
 @Email VARCHAR(254),
@@ -243,40 +269,39 @@ SET NOCOUNT ON;
 
 DECLARE @UserID INT;
 DECLARE @PasswordHash VARCHAR(255);
+DECLARE @Salt NVARCHAR(50);
 DECLARE @IsLocked BIT;
 DECLARE @IsVerified BIT;
 DECLARE @IpAddress VARCHAR(50) = '123.456.19.7'
 DECLARE @IsSuccessful BIT;
-
+DECLARE @ValidTo DATETIME;
 
 SELECT @UserID = u.UserID,
 @PasswordHash = u.PasswordHash,
+@Salt = u.SALT,
 @IsLocked = u.IsLocked,
 @IsVerified = ev.IsVerified,
-@Email = u.Email
+@Email = u.Email,
+@ValidTo = u.ValidTo
 FROM Users u
 INNER JOIN EmailVerification ev ON u.UserID = ev.UserID
 WHERE u.Email = @Email;
-
 
 IF @UserID IS NULL
 BEGIN
 SET @ResultCode = 1;
 PRINT 'User does not exist';
 
-
 SET @IsSuccessful = 0;
 INSERT INTO LoginAttempts (UserID, Email, IpAddress, IsSuccessful, AttemptTime)
 VALUES (@UserID, @Email, @IpAddress, @IsSuccessful, GETDATE());
 RETURN;
 END;
-
 
 IF @IsLocked = 1
 BEGIN
 SET @ResultCode = 1;
-PRINT 'Your account is locked. Please email us at HederligeHarry@HarrysSortiment.se for more information regarding the lockout.';
-
+PRINT 'Your account is locked. Contact Support.';
 
 SET @IsSuccessful = 0;
 INSERT INTO LoginAttempts (UserID, Email, IpAddress, IsSuccessful, AttemptTime)
@@ -284,6 +309,24 @@ VALUES (@UserID, @Email, @IpAddress, @IsSuccessful, GETDATE());
 RETURN;
 END;
 
+IF EXISTS (
+SELECT 1
+FROM LoginAttempts
+WHERE UserID = @UserID
+AND IsSuccessful = 0
+AND AttemptTime > DATEADD(MINUTE, -15, GETDATE())
+GROUP BY UserID
+HAVING COUNT(*) >= 3
+)
+BEGIN
+
+UPDATE Users
+SET IsLocked = 1
+WHERE UserID = @UserID;
+
+SET @ResultCode = 1;
+PRINT 'Too many failed login attempts. Your account has been locked.';
+END
 
 IF @IsVerified = 0
 BEGIN
@@ -296,15 +339,13 @@ VALUES (@UserID, @Email, @IpAddress, @IsSuccessful, GETDATE());
 RETURN;
 END;
 
-
 DECLARE @HashedPassword VARCHAR(255);
-SET @HashedPassword = HASHBYTES('SHA2_256', @Password);
+SET @HashedPassword = HASHBYTES('SHA2_256', @Password + @Salt);
 
 IF @PasswordHash <> @HashedPassword
 BEGIN
 SET @ResultCode = 1;
 PRINT 'Incorrect password.';
-
 
 SET @IsSuccessful = 0;
 INSERT INTO LoginAttempts (UserID, Email, IpAddress, IsSuccessful, AttemptTime)
@@ -312,18 +353,32 @@ VALUES (@UserID, @Email, @IpAddress, @IsSuccessful, GETDATE());
 RETURN;
 END;
 
+IF @ValidTo < GETDATE()
+BEGIN
+SET @ResultCode = 1;
+PRINT 'Your account has expired.';
+
+SET @IsSuccessful = 0;
+INSERT INTO LoginAttempts (UserID, Email, IpAddress, IsSuccessful, AttemptTime)
+VALUES (@UserID, @Email, @IpAddress, @IsSuccessful, GETDATE());
+RETURN;
+END;
+
+SET @ValidTo = DATEADD(YEAR, 1, GETDATE());
+
+UPDATE Users
+SET ValidTo = @ValidTo
+WHERE UserID = @UserID;
 
 SET @ResultCode = 0;
 PRINT 'Login successful';
-
 
 SET @IsSuccessful = 1;
 INSERT INTO LoginAttempts (UserID, Email, IpAddress, IsSuccessful, AttemptTime)
 VALUES (@UserID, @Email, @IpAddress, @IsSuccessful, GETDATE());
 END;
-
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 GO
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 CREATE OR ALTER VIEW LoginAttemptinfo AS
 WITH AttemptInfo AS (
 SELECT u.Email AS Email, u.Firstname AS FirstName, u.LastName AS LastName, la.AttemptTime AS AttemptTime, la.IsSuccessFul AS IsSuccessFul,
@@ -335,27 +390,24 @@ SELECT Email, FirstName, LastName,
 AttemptTime, IsSuccessFul
 FROM AttemptInfo
 WHERE Row = 1
-GO
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- --8.
 
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 GO
 CREATE OR ALTER VIEW AttemptsPerIpAddress AS
 SELECT IpAddress, AttemptTime,
-COUNT(*) OVER (PARTITION BY IpAddress) AS TotalAttempts, -- Totalt antal försök per IP
-COUNT(CASE WHEN IsSuccessFul = 1 THEN 1 END) OVER (PARTITION BY IpAddress) AS SuccessfulAttempts, 
-COUNT(CASE WHEN IsSuccessFul = 0 THEN 1 END) OVER (PARTITION BY IpAddress) AS FailedAttempts, 
+COUNT(*) OVER (PARTITION BY IpAddress) AS TotalAttempts,
+COUNT(CASE WHEN IsSuccessFul = 1 THEN 1 END) OVER (PARTITION BY IpAddress) AS SuccessfulAttempts,
+COUNT(CASE WHEN IsSuccessFul = 0 THEN 1 END) OVER (PARTITION BY IpAddress) AS FailedAttempts,
 AVG(CASE WHEN IsSuccessFul = 1 THEN 1.0 ELSE 0.0 END) OVER (PARTITION BY IpAddress) AS AvgSuccessRate 
 FROM LoginAttempts;
 GO
 
 --------------------------------------------------------------------------------------------------------------------------------------------------
-
 GO
 CREATE OR ALTER PROCEDURE UpdateUserRole
-@AdminID INT,        -- ID för den som kör proceduren
-@UserID INT,   -- ID för användaren vars roll ska uppdateras
-@NewRole VARCHAR(10) -- Ny roll: 'Customer' eller 'Admin'
+@AdminID INT,
+@UserID INT,
+@NewRole VARCHAR(10)
 AS
 BEGIN
 SET NOCOUNT ON;
@@ -382,16 +434,13 @@ WHERE UserID = @UserID;
 PRINT 'User role updated'
 END;
 GO
---------------------------------------------------------------------TESSSTTTTTTTTTAAAARRRRR-----------------------------------------------------------------------------------
-EXEC UpdateUserRole @AdminID = 1, @UserID = 2, @NewRole = 'Admin';
+---------------------------------------------------------TESTAR SP-----------------------------------------------------------------------
 
-EXEC LockAccount @userid = 1
-
-EXEC UnLockAccount @userid = 1
- 
+-----------------------------------------------------------ADMIN-------------------------------------------------------------------------
+GO
 DECLARE @ResultCode BIT;
 EXEC CreateAccount
-    @Email = 'yarothomas@gmaail.com',
+    @Email = 'yarothomas@gmail.com',
     @Password = 'Värstingkod1!',
     @FirstName = 'Thomas',
     @LastName = 'Yaro',
@@ -399,32 +448,133 @@ EXEC CreateAccount
     @PostalCode = '12461',
     @City = 'Stockholm',
     @Country = 'Sweden',
-    @PhoneNumber = '1234567890',
+    @PhoneNumber = '0731436274',
+    @ResultCode = @ResultCode OUTPUT;
+GO
+UPDATE Users
+SET Role = 'Admin'
+WHERE UserID = 1;
+
+UPDATE emailverification
+SET isverified = 1
+WHERE UserID = 1;
+
+---------------------------------------------------------------VERIFIERAD MEN LOCKEDOUT-----------------------------------------------------------------------------------------------
+GO
+DECLARE @ResultCode BIT;
+EXEC CreateAccount
+    @Email = 'HejSan@gmail.com',
+    @Password = 'JättesvårKod123!',
+    @FirstName = 'Hej',
+    @LastName = 'San',
+    @Address = 'BäverdamsGränd 4',
+    @PostalCode = '12465',
+    @City = 'Stockholm',
+    @Country = 'Sweden',
+    @PhoneNumber = '0735697463',
+    @ResultCode = @ResultCode OUTPUT;
+GO
+UPDATE emailverification
+SET isverified = 1
+WHERE UserID = 2;
+GO
+EXEC LockAccount @userid = 2;
+
+--FÖR ATT UNLOCKA
+--EXEC UnLockAccount @userid = 2
+
+---------------------------------------------VERIFIERAT KONTO---------------------------------------------------------------------------------------------------------------------------
+GO
+DECLARE @ResultCode BIT;
+EXEC CreateAccount
+    @Email = 'Henry23@gmail.com',
+    @Password = 'Enkelkod1234!#',
+    @FirstName = 'Henry',
+    @LastName = 'Lind',
+    @Address = 'Lurstigen 14',
+    @PostalCode = '12468',
+    @City = 'Stockholm',
+    @Country = 'Sweden',
+    @PhoneNumber = '0738467835',
+    @ResultCode = @ResultCode OUTPUT;
+GO
+UPDATE emailverification
+SET isverified = 1
+WHERE UserID = 3;
+
+----------------------------------------------------NYTT SKAPAD KONTO BEHÖVER VERIFIERING---------------------------------------------------------------------------------------------------
+GO
+DECLARE @ResultCode BIT;
+EXEC CreateAccount
+    @Email = 'Daniel33@gmail.com',
+    @Password = 'Enklarekodddd1717!!',
+    @FirstName = 'Daniel',
+    @LastName = 'Danielson',
+    @Address = 'GillerBacken 11',
+    @PostalCode = '12469',
+    @City = 'Stockholm',
+    @Country = 'Sweden',
+    @PhoneNumber = '0738464447',
     @ResultCode = @ResultCode OUTPUT;
 
-	SELECT * FROM Users
-	SELECT * FROM Emailverification
-	SELECT * FROM passwordreset
-	SELECT * FROM loginattempts
-
-
-	DECLARE @ResultCode BIT;
+----------------------------------------------------GLÖMT LÖSSENORD---------------------------------------------------------------------------------------------------
+GO
+DECLARE @ResultCode BIT;
+EXEC CreateAccount
+    @Email = 'DavidB@gmail.com',
+    @Password = 'Daviddbb123!',
+    @FirstName = 'David',
+    @LastName = 'Beckham',
+    @Address = 'BjusätraGatan 57',
+    @PostalCode = '12471',
+    @City = 'Stockholm',
+    @Country = 'Sweden',
+    @PhoneNumber = '0738474656',
+    @ResultCode = @ResultCode OUTPUT;
+GO
+UPDATE emailverification
+SET isverified = 1
+WHERE UserID = 5;
+GO
+DECLARE @ResultCode BIT;
 EXEC ResetPassword
-    @Email = 'yarothomas@gmaail.com',
+    @Email = 'DavidB@gmail.com',
     @ResultCode = @ResultCode OUTPUT;
 
-
-	UPDATE emailverification
-	SET isverified = 1
-	WHERE UserID = 1
-	
-
-	DECLARE @ResultCode BIT;
+----------------------------------------------------SÄTT NYTT LÖSSENORD---------------------------------------------------------------------------------------------------
+--SELECT * FROM PasswordReset  -- TA FRAM DEN NYA RESETKODEN, KOPIERA OCH KLISTRA IN I FÄLTET @RESETCODE
+--GO
+--	DECLARE @ResultCode BIT;
+--EXEC SetForgottenPassword
+--    @Email = 'DavidB@gmail.com',
+--   @Password = 'Dennyastekoden1233',
+--    @ResetCode = 'DD71681D-83E4-43E6-8DD0-F852EE420FDC',  -- < < < < <----------
+--   @ResultCode = @ResultCode OUTPUT;
+----------------------------------------------------ETT INLOGGNINGSFÖRSÖK AV ADMIN---------------------------------------------------------------------------------------------------
+GO
+DECLARE @ResultCode BIT;
 EXEC LoginAttempt
-    @Email = 'yarothomas@gmaaail.com',
-    @Password = 'Värstingkod1',
+    @Email = 'Yarothomas@gmail.com',
+    @Password = 'Värstingkod1!',
     @ResultCode = @ResultCode OUTPUT;
 
-	UPDATE Users
-	SET Role = 'Admin'
-	WHERE UserID = 1
+----------------------------------------------------ETT MISSLYCKAD INLOGGNINGSFÖRSÖK---------------------------------------------------------------------------------------------------
+GO
+DECLARE @ResultCode BIT;
+EXEC LoginAttempt
+    @Email = 'Daniel33@gmail.com',
+    @Password = 'Enklarekodddd1717!!',
+    @ResultCode = @ResultCode OUTPUT;
+
+----------------------------------------------------GÖR EN CUSTOMER TILL ADMIN---------------------------------------------------------------------------------------------------
+--GO
+--EXEC UpdateUserRole @AdminID = 1, @UserID = 2, @NewRole = 'Admin';
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+---------------------------------DEMONSTRERAR VIEWS----------------------------------------------------------------------------------------------------------------------
+SELECT *
+FROM LoginAttemptinfo;
+
+SELECT *
+FROM AttemptsPerIpAddress
