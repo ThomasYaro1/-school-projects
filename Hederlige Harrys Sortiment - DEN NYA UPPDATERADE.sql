@@ -248,7 +248,7 @@ DECLARE @IsVerified BIT;
 DECLARE @IpAddress VARCHAR(50) = '123.456.19.7'
 DECLARE @IsSuccessful BIT;
 
-    -- Hämta användardata
+
 SELECT @UserID = u.UserID,
 @PasswordHash = u.PasswordHash,
 @IsLocked = u.IsLocked,
@@ -258,66 +258,65 @@ FROM Users u
 INNER JOIN EmailVerification ev ON u.UserID = ev.UserID
 WHERE u.Email = @Email;
 
-    -- Kontrollera om användaren existerar
+
 IF @UserID IS NULL
 BEGIN
 SET @ResultCode = 1;
 PRINT 'User does not exist';
 
-        -- Logga misslyckat försök
+
 SET @IsSuccessful = 0;
 INSERT INTO LoginAttempts (UserID, Email, IpAddress, IsSuccessful, AttemptTime)
 VALUES (@UserID, @Email, @IpAddress, @IsSuccessful, GETDATE());
 RETURN;
 END;
 
-    -- Kontrollera om kontot är låst
+
 IF @IsLocked = 1
 BEGIN
 SET @ResultCode = 1;
 PRINT 'Your account is locked. Please email us at HederligeHarry@HarrysSortiment.se for more information regarding the lockout.';
 
-        -- Logga misslyckat försök
+
 SET @IsSuccessful = 0;
 INSERT INTO LoginAttempts (UserID, Email, IpAddress, IsSuccessful, AttemptTime)
 VALUES (@UserID, @Email, @IpAddress, @IsSuccessful, GETDATE());
 RETURN;
 END;
 
-    -- Kontrollera om kontot är verifierat
+
 IF @IsVerified = 0
 BEGIN
 SET @ResultCode = 1;
 PRINT 'Your account is not verified. Please check your email inbox and follow the instructions to verify your account.';
 
-        -- Logga misslyckat försök
 SET @IsSuccessful = 0;
 INSERT INTO LoginAttempts (UserID, Email, IpAddress, IsSuccessful, AttemptTime)
 VALUES (@UserID, @Email, @IpAddress, @IsSuccessful, GETDATE());
 RETURN;
 END;
 
-    -- Verifiera lösenord (exempel på hashning)
+
 DECLARE @HashedPassword VARCHAR(255);
-SET @HashedPassword = HASHBYTES('SHA2_256', @Password); -- Anpassa om du använder en annan metod för lösenordshantering
+SET @HashedPassword = HASHBYTES('SHA2_256', @Password);
 
 IF @PasswordHash <> @HashedPassword
 BEGIN
 SET @ResultCode = 1;
 PRINT 'Incorrect password.';
 
-        -- Logga misslyckat försök
+
 SET @IsSuccessful = 0;
 INSERT INTO LoginAttempts (UserID, Email, IpAddress, IsSuccessful, AttemptTime)
 VALUES (@UserID, @Email, @IpAddress, @IsSuccessful, GETDATE());
 RETURN;
 END;
 
-    -- Om allt är korrekt
+
 SET @ResultCode = 0;
 PRINT 'Login successful';
 
-    -- Logga lyckat försök
+
 SET @IsSuccessful = 1;
 INSERT INTO LoginAttempts (UserID, Email, IpAddress, IsSuccessful, AttemptTime)
 VALUES (@UserID, @Email, @IpAddress, @IsSuccessful, GETDATE());
@@ -335,7 +334,7 @@ INNER JOIN LoginAttempts la ON u.UserID = la.UserID
 SELECT Email, FirstName, LastName, 
 AttemptTime, IsSuccessFul
 FROM AttemptInfo
-WHERE Row = 1 -- Filtrera för att visa den senaste lyckade och misslyckade inloggningen
+WHERE Row = 1
 GO
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  --8.
@@ -344,9 +343,9 @@ GO
 CREATE OR ALTER VIEW AttemptsPerIpAddress AS
 SELECT IpAddress, AttemptTime,
 COUNT(*) OVER (PARTITION BY IpAddress) AS TotalAttempts, -- Totalt antal försök per IP
-COUNT(CASE WHEN IsSuccessFul = 1 THEN 1 END) OVER (PARTITION BY IpAddress) AS SuccessfulAttempts, -- Lyckade försök per IP
-COUNT(CASE WHEN IsSuccessFul = 0 THEN 1 END) OVER (PARTITION BY IpAddress) AS FailedAttempts, -- Misslyckade försök per IP
-AVG(CASE WHEN IsSuccessFul = 1 THEN 1.0 ELSE 0.0 END) OVER (PARTITION BY IpAddress) AS AvgSuccessRate -- Genomsnitt för lyckade försök
+COUNT(CASE WHEN IsSuccessFul = 1 THEN 1 END) OVER (PARTITION BY IpAddress) AS SuccessfulAttempts, 
+COUNT(CASE WHEN IsSuccessFul = 0 THEN 1 END) OVER (PARTITION BY IpAddress) AS FailedAttempts, 
+AVG(CASE WHEN IsSuccessFul = 1 THEN 1.0 ELSE 0.0 END) OVER (PARTITION BY IpAddress) AS AvgSuccessRate 
 FROM LoginAttempts;
 GO
 
@@ -361,7 +360,6 @@ AS
 BEGIN
 SET NOCOUNT ON;
 
-    -- Kontrollera att den som kör proceduren är en admin
 IF NOT EXISTS (
 SELECT 1
 FROM Users
@@ -372,7 +370,6 @@ PRINT 'Permission denied: Only admins can update user roles.';
 RETURN;
 END;
 
-    -- Uppdatera användarens roll om den nya rollen är giltig
 IF @NewRole NOT IN ('Customer', 'Admin')
 BEGIN
 PRINT 'Invalid role. Allowed roles are Customer or Admin.';
