@@ -231,7 +231,7 @@ SET Islocked = 0
 WHERE UserID = @UserID
 PRINT 'Account is Unlocked'
 END;
----------------------------------------------LAGRA ALLA INLOGGNIGSFÖRSÖK---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------LAGRA ALLA INLOGGNIGSFÃ–RSÃ–K---------------------------------------------------------------------------------------------------------------------------------
 GO
 CREATE OR ALTER PROCEDURE LoginAttempt
 @Email VARCHAR(254),
@@ -248,7 +248,7 @@ DECLARE @IsVerified BIT;
 DECLARE @IpAddress VARCHAR(50) = '123.456.19.7'
 DECLARE @IsSuccessful BIT;
 
-    -- Hämta användardata
+    -- HÃ¤mta anvÃ¤ndardata
 SELECT @UserID = u.UserID,
 @PasswordHash = u.PasswordHash,
 @IsLocked = u.IsLocked,
@@ -258,66 +258,66 @@ FROM Users u
 INNER JOIN EmailVerification ev ON u.UserID = ev.UserID
 WHERE u.Email = @Email;
 
-    -- Kontrollera om användaren existerar
+    -- Kontrollera om anvÃ¤ndaren existerar
 IF @UserID IS NULL
 BEGIN
 SET @ResultCode = 1;
 PRINT 'User does not exist';
 
-        -- Logga misslyckat försök
+        -- Logga misslyckat fÃ¶rsÃ¶k
 SET @IsSuccessful = 0;
 INSERT INTO LoginAttempts (UserID, Email, IpAddress, IsSuccessful, AttemptTime)
 VALUES (@UserID, @Email, @IpAddress, @IsSuccessful, GETDATE());
 RETURN;
 END;
 
-    -- Kontrollera om kontot är låst
+    -- Kontrollera om kontot Ã¤r lÃ¥st
 IF @IsLocked = 1
 BEGIN
 SET @ResultCode = 1;
 PRINT 'Your account is locked. Please email us at HederligeHarry@HarrysSortiment.se for more information regarding the lockout.';
 
-        -- Logga misslyckat försök
+        -- Logga misslyckat fÃ¶rsÃ¶k
 SET @IsSuccessful = 0;
 INSERT INTO LoginAttempts (UserID, Email, IpAddress, IsSuccessful, AttemptTime)
 VALUES (@UserID, @Email, @IpAddress, @IsSuccessful, GETDATE());
 RETURN;
 END;
 
-    -- Kontrollera om kontot är verifierat
+    -- Kontrollera om kontot Ã¤r verifierat
 IF @IsVerified = 0
 BEGIN
 SET @ResultCode = 1;
 PRINT 'Your account is not verified. Please check your email inbox and follow the instructions to verify your account.';
 
-        -- Logga misslyckat försök
+        -- Logga misslyckat fÃ¶rsÃ¶k
 SET @IsSuccessful = 0;
 INSERT INTO LoginAttempts (UserID, Email, IpAddress, IsSuccessful, AttemptTime)
 VALUES (@UserID, @Email, @IpAddress, @IsSuccessful, GETDATE());
 RETURN;
 END;
 
-    -- Verifiera lösenord (exempel på hashning)
+    -- Verifiera lÃ¶senord (exempel pÃ¥ hashning)
 DECLARE @HashedPassword VARCHAR(255);
-SET @HashedPassword = HASHBYTES('SHA2_256', @Password); -- Anpassa om du använder en annan metod för lösenordshantering
+SET @HashedPassword = HASHBYTES('SHA2_256', @Password); -- Anpassa om du anvÃ¤nder en annan metod fÃ¶r lÃ¶senordshantering
 
 IF @PasswordHash <> @HashedPassword
 BEGIN
 SET @ResultCode = 1;
 PRINT 'Incorrect password.';
 
-        -- Logga misslyckat försök
+        -- Logga misslyckat fÃ¶rsÃ¶k
 SET @IsSuccessful = 0;
 INSERT INTO LoginAttempts (UserID, Email, IpAddress, IsSuccessful, AttemptTime)
 VALUES (@UserID, @Email, @IpAddress, @IsSuccessful, GETDATE());
 RETURN;
 END;
 
-    -- Om allt är korrekt
+    -- Om allt Ã¤r korrekt
 SET @ResultCode = 0;
 PRINT 'Login successful';
 
-    -- Logga lyckat försök
+    -- Logga lyckat fÃ¶rsÃ¶k
 SET @IsSuccessful = 1;
 INSERT INTO LoginAttempts (UserID, Email, IpAddress, IsSuccessful, AttemptTime)
 VALUES (@UserID, @Email, @IpAddress, @IsSuccessful, GETDATE());
@@ -335,24 +335,18 @@ INNER JOIN LoginAttempts la ON u.UserID = la.UserID
 SELECT Email, FirstName, LastName, 
 AttemptTime, IsSuccessFul
 FROM AttemptInfo
-WHERE Row = 1 -- Filtrera för att visa den senaste lyckade och misslyckade inloggningen
+WHERE Row = 1 -- Filtrera fÃ¶r att visa den senaste lyckade och misslyckade inloggningen
 GO
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- --8. Skapa en rapport(VIEW) som tar fram hur många inloggningsförsök som lyckats och inte lyckats per Ip-adress.
---Rapporten ska visa antal försök (total, lyckade och inte lyckade) 
---och genomsnittet av de lyckade försöken. 
---Samtliga kolumner ska sorteras kumulativt(ökande) på datum. 
---Se till att rapporten INTE tar bort detaljerad information från raderna; 
---det ska vara specifika sammanfattningar per rad(window function).
---Demonstrera er VIEW.  
+ --8.
 
 GO
 CREATE OR ALTER VIEW AttemptsPerIpAddress AS
 SELECT IpAddress, AttemptTime,
-COUNT(*) OVER (PARTITION BY IpAddress) AS TotalAttempts, -- Totalt antal försök per IP
-COUNT(CASE WHEN IsSuccessFul = 1 THEN 1 END) OVER (PARTITION BY IpAddress) AS SuccessfulAttempts, -- Lyckade försök per IP
-COUNT(CASE WHEN IsSuccessFul = 0 THEN 1 END) OVER (PARTITION BY IpAddress) AS FailedAttempts, -- Misslyckade försök per IP
-AVG(CASE WHEN IsSuccessFul = 1 THEN 1.0 ELSE 0.0 END) OVER (PARTITION BY IpAddress) AS AvgSuccessRate -- Genomsnitt för lyckade försök
+COUNT(*) OVER (PARTITION BY IpAddress) AS TotalAttempts, -- Totalt antal fÃ¶rsÃ¶k per IP
+COUNT(CASE WHEN IsSuccessFul = 1 THEN 1 END) OVER (PARTITION BY IpAddress) AS SuccessfulAttempts, -- Lyckade fÃ¶rsÃ¶k per IP
+COUNT(CASE WHEN IsSuccessFul = 0 THEN 1 END) OVER (PARTITION BY IpAddress) AS FailedAttempts, -- Misslyckade fÃ¶rsÃ¶k per IP
+AVG(CASE WHEN IsSuccessFul = 1 THEN 1.0 ELSE 0.0 END) OVER (PARTITION BY IpAddress) AS AvgSuccessRate -- Genomsnitt fÃ¶r lyckade fÃ¶rsÃ¶k
 FROM LoginAttempts;
 GO
 
@@ -360,14 +354,14 @@ GO
 
 GO
 CREATE OR ALTER PROCEDURE UpdateUserRole
-@AdminID INT,        -- ID för den som kör proceduren
-@UserID INT,   -- ID för användaren vars roll ska uppdateras
+@AdminID INT,        -- ID fÃ¶r den som kÃ¶r proceduren
+@UserID INT,   -- ID fÃ¶r anvÃ¤ndaren vars roll ska uppdateras
 @NewRole VARCHAR(10) -- Ny roll: 'Customer' eller 'Admin'
 AS
 BEGIN
 SET NOCOUNT ON;
 
-    -- Kontrollera att den som kör proceduren är en admin
+    -- Kontrollera att den som kÃ¶r proceduren Ã¤r en admin
 IF NOT EXISTS (
 SELECT 1
 FROM Users
@@ -378,7 +372,7 @@ PRINT 'Permission denied: Only admins can update user roles.';
 RETURN;
 END;
 
-    -- Uppdatera användarens roll om den nya rollen är giltig
+    -- Uppdatera anvÃ¤ndarens roll om den nya rollen Ã¤r giltig
 IF @NewRole NOT IN ('Customer', 'Admin')
 BEGIN
 PRINT 'Invalid role. Allowed roles are Customer or Admin.';
@@ -401,10 +395,10 @@ EXEC UnLockAccount @userid = 1
 DECLARE @ResultCode BIT;
 EXEC CreateAccount
     @Email = 'yarothomas@gmaail.com',
-    @Password = 'Värstingkod1!',
+    @Password = 'VÃ¤rstingkod1!',
     @FirstName = 'Thomas',
     @LastName = 'Yaro',
-    @Address = 'StövarGatan 24',
+    @Address = 'StÃ¶varGatan 24',
     @PostalCode = '12461',
     @City = 'Stockholm',
     @Country = 'Sweden',
@@ -431,7 +425,7 @@ EXEC ResetPassword
 	DECLARE @ResultCode BIT;
 EXEC LoginAttempt
     @Email = 'yarothomas@gmaaail.com',
-    @Password = 'Värstingkod1',
+    @Password = 'VÃ¤rstingkod1',
     @ResultCode = @ResultCode OUTPUT;
 
 	UPDATE Users
